@@ -27,10 +27,25 @@ app.get("/", (req, res)=> {
 })
 
 //creating mentor
+//Give request body contents as follows
+// {
+//     "mentor_name":"Gopi",
+//     "experience_in_yrs": 7,
+//     "subject": "Full Stack Development" 
+// }
 app.post("/mentor", async (req, res) => {
     const mentor = req.body;
+    const {mentor_name} = req.body;
     mentor.id = uuidv4();
     console.log(`mentor: ${mentor}`);
+    //Checking if mentor already exists
+      const MentorExist = await client.db("studentMentor").collection("mentors").findOne({mentor_name: mentor_name});
+      if(MentorExist) {
+          res.status(400).send({
+              message: "Mentor already Present"
+          })
+          return;
+      }
     const result = await client.db("studentMentor").collection("mentors").insertOne(mentor);
     res.status(200).send({
         message: "Mentor created successfully"
@@ -38,17 +53,39 @@ app.post("/mentor", async (req, res) => {
 })
 
 //creating student
+//Give request body contents as follows
+// {
+//     "student_name": "Kabir",
+//     "Class": 14,
+//     "Percentage%": 95
+// }
 app.post("/student", async (req, res) => {
-    const mentor = req.body;
-    mentor.id = uuidv4();
-    console.log(`mentor: ${mentor}`);
-    const result = await client.db("studentMentor").collection("students").insertOne(mentor);
+    const student = req.body;
+    const {student_name} = req.body;
+    student.id = uuidv4();
+    console.log(`student: ${student}`);
+
+     //Checking if mentor already exists
+     const StudentExist= await client.db("studentMentor").collection("students").findOne({student_name: student_name});
+     if(StudentExist) {
+         res.status(400).send({
+             message: "Student already Present"
+         })
+         return;
+     }
+    const result = await client.db("studentMentor").collection("students").insertOne(student);
     res.status(200).send({
         message: "Student created successfully"
     });
 });
 
 //assign student to mentor
+//Give reuest body content as follows
+// {
+//     "cur_mentor_name": "Gopi",
+//     "new_mentor_name": "Sangeetha",
+//     "student_name": ["Rahul"]
+// }
 app.post("/assignstudent", async (req, res) => {
     const assign = req.body;
     const {student_names, mentor_name} = req.body;
@@ -106,6 +143,59 @@ app.post("/assignstudent", async (req, res) => {
     });
 });
 
+//Change the mentor of student
+//Give request body contents as follows
+// {
+//     "cur_mentor_name": "Gopi",
+//     "new_mentor_name": "Sangeetha",
+//     "student_name": ["Rahul"]
+// }
+app.post("/changeMentor", async (req, res) => {
+    const {student_name, cur_mentor_name, new_mentor_name} = req.body;
+    const stu_name = req.body.student_name[0];
+
+    //checking if cur_mentor exists or not
+    const curMentorExist = await client.db("studentMentor").collection("assignStudent").findOne({mentor_name: cur_mentor_name});
+    if(!curMentorExist) {
+        res.status(404).send({
+            message: "Current mentor not found"
+        })
+        return;
+    }
+
+    //removing student from existing mentor
+    const updateCurMentor = await client.db("studentMentor").collection("assignStudent").updateOne(
+        {mentor_name: cur_mentor_name},
+        {$pull: {student_names:{$in: student_name}}}
+    )
+
+    //Checking if new_mentor exists or not
+    const NewMentorExist = await client.db("studentMentor").collection("assignStudent").findOne({mentor_name: new_mentor_name});
+    if(!NewMentorExist) {
+        res.status(404).send({
+            message: "New mentor not found"
+        })
+        return;
+    }
+    
+    //Assigning student to new mentor
+    const updateNewMentor = await client.db("studentMentor").collection("assignStudent").updateOne(
+        {mentor_name: new_mentor_name},
+        {$push: {student_names: {$each: student_name}}}
+    )
+
+    //Insterting this newly assigned mentor and student details to StudentsNewMentors collection
+    const result = await client.db("studentMentor").collection("studentsNewMentors").insertOne({
+        student_name: stu_name, 
+        previous_mentor_name:cur_mentor_name, 
+        new_mentor_name: new_mentor_name
+    });
+
+    res.status(200).send({
+        message: "Student reassigned successfully!!!"
+    })
+})
+
 //fetching students of particular mentor
 app.get("/fetchStudents/:mentor", async (req, res) => {
     const {mentor} = req.params;
@@ -128,6 +218,36 @@ app.get("/fetchStudents/:mentor", async (req, res) => {
     res.status(200).send(students[0]);
 
 });
+
+//fetching previous mentor of particular student
+app.get("/fetchPreviousMentor/:student", async (req, res) => {
+    const {student} = req.params;
+    console.log(`student: ${student}`);
+    const StudentExist = await client.db("studentMentor").collection("studentsNewMentors").findOne({student_name: student});
+    if(!StudentExist) {
+        res.status(404).send({
+            message: "No Previous Mentor found"
+        })
+        return;
+    }
+    const students = await client.db("studentMentor").collection("studentsNewMentors").aggregate([
+        {
+            $match: {
+                student_name: student
+            }
+        },
+        {
+            $project: {
+                previous_mentor_name: 1,
+                _id: 0
+            }
+        }
+    ]).toArray();
+    //const students = await client.db("studentMentor").collection("assignStudent").find({mentor_name: mentor},{student_names:1, mentor_name:0}).toArray();
+    res.status(200).send(students[0]);
+
+});
+
 
 app.listen(PORT, ()=> {
     console.log(`The server is listening on port ${PORT}`);
